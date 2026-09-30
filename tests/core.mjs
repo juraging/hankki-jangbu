@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import {parseReceipt,validDate} from '../lib/receipt-parser.mjs';
+assert.equal(validDate('2026-02-30'),false);
+assert.equal(validDate('2024-02-29'),true);
+const parsed=parseReceipt('상호: 서울식당\n2026.09.29\n과세 29,091\n부가세 2,909\n합계 32,000');
+assert.equal(parsed.amount,'32000');assert.equal(parsed.date,'2026-09-29');assert.equal(parsed.place,'서울식당');
+const base='http://127.0.0.1:5173';
+let r=await fetch(base+'/api/data');assert.equal(r.status,401);
+r=await fetch(base+'/signin-with-chatgpt?return_to=/',{redirect:'manual'});
+const cookie=r.headers.get('set-cookie').split(';')[0];
+const headers={cookie,Origin:base,'Content-Type':'application/json'};
+const data=await fetch(base+'/api/data',{headers}).then(r=>r.json());assert.equal(data.companies.length,4);
+const post=async(body,h=headers)=>{const r=await fetch(base+'/api/action',{method:'POST',headers:h,body:JSON.stringify(body)});return {status:r.status,data:await r.json().catch(()=>({}))}};
+const id=crypto.randomUUID(),draft={action:'save',id,companyId:data.companies[0].id,date:'2026-09-29',amount:32000,currency:'KRW',place:'자동검증용 식당',note:'LOCAL TEST',mime:'image/jpeg',image:'/9j/2Q=='};
+assert.ok([400,403].includes((await post(draft,{...headers,Origin:'https://invalid.example'})).status));
+assert.equal((await post({...draft,date:'2026-02-30'})).status,400);
+assert.equal((await post({...draft,companyId:'not-owned'})).status,400);
+assert.equal((await post({...draft,amount:-1})).status,400);
+const saved=await post(draft);assert.equal(saved.status,200,JSON.stringify(saved));assert.equal(saved.data.id,id);
+const duplicate=await post({...draft,id:crypto.randomUUID()});assert.equal(duplicate.data.duplicate,true);assert.equal(duplicate.data.id,id);
+r=await fetch(base+'/api/photo?id='+id,{headers});assert.equal(r.status,200);assert.equal(r.headers.get('content-type'),'image/jpeg');
+assert.equal((await fetch(base+'/api/photo?id='+id)).status,401);
+assert.equal((await post({action:'sync',id})).status,400);
+assert.equal((await post({action:'ocr',image:'/9j/2Q==',mime:'image/jpeg'})).status,400);
+console.log('PASS: date and amount parsing; anonymous denial; cross-origin denial; ownership; validation; durable save; duplicate suppression; photo access; disconnected sync/OCR.');
+
